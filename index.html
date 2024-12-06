@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Force Layout Visualization</title>
+        <script src="https://d3js.org/d3.v7.min.js"></script>
+        <style>
+            .tooltip {
+                position: absolute;
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                padding: 10px;
+                box-shadow: 0px 0px 5px rgba(0, 0, 0, 0.3);
+                pointer-events: none;
+                font-size: 12px;
+            }
+
+            .node {
+                stroke: #333;
+                stroke-width: 1px;
+            }
+
+            .link {
+                stroke: #aaa;
+                stroke-width: 1px;
+            }
+        </style>
+    </head>
+
+    <body>
+        <h2 style="text-align: center">Publication Visualization</h2>
+        <div id="visualization" style="width: 600px; height: 600px"></div>
+        <div id="ui-controls" style="text-align: center; margin: 20px">
+            <label for="charge-strength">Charge Strength:</label>
+            <input
+                type="range"
+                id="charge-strength"
+                min="-1"
+                max="10"
+                value="5"
+                step="0.1"
+            />
+            <label for="link-strength">Link Strength:</label>
+            <input
+                type="range"
+                id="link-strength"
+                min="0"
+                max="2"
+                value="0.1"
+                step="0.01"
+            />
+        </div>
+        <div class="tooltip" style="display: block"></div>
+
+        <script>
+            const width = 600,
+                height = 600;
+
+            const topCountryPublisher = [
+                "IEEE Computer Society",
+                "Elsevier Ltd",
+                "BioMed Central Ltd.",
+                "IEEE, United States",
+                "ACM, New York, NY, United States",
+                "Springer",
+                "IEEE, Piscataway, NJ, United States",
+                "Elsevier Science B.V., Amsterdam, Netherlands",
+                "Taylor and Francis Inc.",
+                "Elsevier",
+            ];
+
+            // Append SVG
+            const svg = d3
+                .select("#visualization")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height);
+
+            // Tooltip
+            const tooltip = d3.select(".tooltip");
+
+            const colorScale = d3.scaleOrdinal(d3.schemeCategory10); // D3 color scale
+            const publisherColorMap = {};
+            topCountryPublisher.forEach((publisher, i) => {
+                publisherColorMap[publisher] = colorScale(i); // Assign color from scale
+            });
+
+            // Load data
+            d3.json("publication_network.json").then((data) => {
+                // Node size based on Citations
+                const sizeScale = d3
+                    .scaleSqrt()
+                    .domain([0, d3.max(data.nodes, (d) => d.Citations)])
+                    .range([5, 15]);
+
+                // Force simulation
+                const simulation = d3
+                    .forceSimulation(data.nodes)
+                    .force(
+                        "link",
+                        d3
+                            .forceLink(data.links)
+                            .id((d) => d.id)
+                            .strength(
+                                d3.select("#link-strength").property("value"),
+                            ),
+                    )
+                    .force(
+                        "charge",
+                        d3
+                            .forceManyBody()
+                            .strength(
+                                d3.select("#charge-strength").property("value"),
+                            ),
+                    )
+                    .force("center", d3.forceCenter(width / 2, height / 2))
+                    .force(
+                        "collide",
+                        d3
+                            .forceCollide()
+                            .radius((d) => sizeScale(d.Citations) + 3),
+                    )
+                    .on("tick", ticked);
+
+                // Create links
+                const links = svg
+                    .selectAll(".link")
+                    .data(data.links)
+                    .enter()
+                    .append("line")
+                    .attr("class", "link");
+
+                // Create nodes
+                const nodes = svg
+                    .selectAll(".node")
+                    .data(data.nodes)
+                    .enter()
+                    .append("circle")
+                    .attr("class", "node")
+                    .attr("r", (d) => sizeScale(d.Citations))
+                    .style(
+                        "fill",
+                        (d) => publisherColorMap[d.Publisher] || "#A9A9A9",
+                    )
+                    .on("mouseover", mouseOver)
+                    .on("mouseout", mouseOut)
+                    .on("click", mouseClick);
+
+                // Update positions
+                function ticked() {
+                    links
+                        .attr("x1", (d) => d.source.x)
+                        .attr("y1", (d) => d.source.y)
+                        .attr("x2", (d) => d.target.x)
+                        .attr("y2", (d) => d.target.y);
+
+                    nodes.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
+                }
+
+                // Hover effects
+                function mouseOver(event, d) {
+                    d3.select(event.target).style("opacity", 1);
+
+                    nodes.style("opacity", (n) => (n.id === d.id ? 1 : 0.2));
+
+                    links.style("opacity", (link) =>
+                        link.source.id === d.id || link.target.id === d.id
+                            ? 1
+                            : 0.2,
+                    );
+                }
+
+                function mouseOut() {
+                    nodes.style("opacity", 1);
+                    links.style("opacity", 1);
+                    tooltip.style("display", "none");
+                }
+
+                // Click event
+                function mouseClick(event, d) {
+                    tooltip.style("display", "none");
+                    tooltip
+                        .style("display", "block")
+                        .style("left", event.pageX + 10 + "px")
+                        .style("top", event.pageY + 10 + "px").html(`
+                                <strong>Title:</strong> ${d.Title}<br>
+                                <strong>Year:</strong> ${d.Year}<br>
+                                <strong>Citations:</strong> ${d.Citations}<br>
+                                <strong>Publisher:</strong> ${d.Publisher}
+                                    `);
+                }
+
+                // Hide tooltip on mouse out
+                // svg.on("click", () => );
+
+                // UI Controls
+                d3.select("#charge-strength").on("input", function () {
+                    simulation.force("charge").strength(+this.value);
+                    simulation.alpha(1).restart();
+                });
+
+                d3.select("#link-strength").on("input", function () {
+                    simulation.force("link").strength(+this.value);
+                    simulation.alpha(1).restart();
+                });
+            });
+        </script>
+    </body>
+</html>
